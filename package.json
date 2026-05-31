@@ -1,0 +1,53 @@
+{
+  "name": "todo-enforcer",
+  "version": "1.0.0",
+  "description": "Todo continuation enforcer for pi-coding-agent — monitors todo state and injects prompts to keep agents working until all tasks complete",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ci": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc --noEmit && vitest run"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "pi-coding-agent",
+    "todo",
+    "enforcer",
+    "task-continuation",
+    "agent-productivity"
+  ],
+  "author": "buihongduc132",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/buihongduc132/todo-enforcer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/buihongduc132/todo-enforcer/issues"
+  },
+  "homepage": "https://github.com/buihongduc132/todo-enforcer#readme",
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": false
+    }
+  },
+  "files": [
+    "src/",
+    "todo-enforcer.example.json",
+    "README.md",
+    "LICENSE"
+  ]
+}

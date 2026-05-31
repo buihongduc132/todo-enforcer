@@ -1,0 +1,52 @@
+{
+  "$schema": "./todo-enforcer/config.schema.json",
+  "enabled": true,
+  "maxInjections": 5,
+  "cooldownMs": 60000,
+  "completionSummary": false,
+  "detectStagnation": true,
+  "stagnationThreshold": 3,
+  "messageDelivery": {
+    "customType": "todo-enforcer",
+    "display": true,
+    "triggerTurn": true,
+    "deliverAs": "followUp"
+  },
+  "contextFeed": {
+    "userMode": "latest",
+    "assistantMode": "allSinceLatestUser",
+    "includeSessionMetadata": true,
+    "excludePreviousEnforcerMessages": true
+  },
+  "rules": [
+    {
+      "name": "incomplete-tasks-remain",
+      "condition": "has_incomplete",
+      "action": "prompt",
+      "prompt": "You have incomplete tasks. Continue working on them.\n\n[Status: {{completed_count}}/{{total_count}} completed, {{incomplete_count}} remaining]\n\nRemaining tasks:\n{{incomplete_list}}\n\nLatest user message:\n{{latest_user_message}}\n\nRecent assistant messages:\n{{assistant_messages}}\n\nPick up where you left off. Do NOT stop until all tasks are completed or explicitly blocked."
+    },
+    {
+      "name": "all-complete-celebration",
+      "condition": "all_complete",
+      "action": "prompt",
+      "prompt": "All {{total_count}} tasks are complete. Great work.\n\nCompleted tasks:\n{{completed_list}}\n\nYou may now summarize the results or ask the user for next steps."
+    },
+    {
+      "name": "remote-followup",
+      "condition": "has_incomplete",
+      "action": "external",
+      "external": {
+        "silent": true,
+        "errorFallback": "default_prompt",
+        "http": {
+          "url": "https://example.com/todo-enforcer",
+          "method": "POST",
+          "headers": {
+            "authorization": "Bearer <token>"
+          },
+          "timeoutMs": 15000
+        }
+      }
+    }
+  ]
+}
