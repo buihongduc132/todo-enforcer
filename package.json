@@ -34,7 +34,7 @@
   "homepage": "https://github.com/buihongduc132/todo-enforcer#readme",
   "devDependencies": {
     "typescript": "^5.8.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": ">=0.1.0"
