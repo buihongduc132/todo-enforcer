@@ -604,9 +604,10 @@ export default function (pi: ExtensionAPI) {
 		const initCfg = loadConfig(process.cwd());
 		if (initCfg.injectTodoPolicy) {
 			registerHook("todo-enforcer", "before_agent_start", { blocking: false, source: "pi", origin: "global" });
-			pi.on("before_agent_start", async (event, _ctx) => {
+			pi.on("before_agent_start", async (event, ctx) => {
 				if (!isEnabled("todo-enforcer", "before_agent_start")) return;
-			const policyText = initCfg.todoPolicyText ?? DEFAULT_TODO_POLICY_TEXT;
+				const cfg = await getConfigWhenNeeded(ctx?.cwd ?? process.cwd());
+				const policyText = cfg.todoPolicyText ?? DEFAULT_TODO_POLICY_TEXT;
 				return { systemPrompt: event.systemPrompt + policyText };
 			});
 		}
@@ -867,6 +868,22 @@ export default function (pi: ExtensionAPI) {
 				condition: rule.condition,
 				action: rule.action,
 			});
+
+			// Handle spawn action (same as pollEvaluate)
+			if (rule.action === "spawn" && rule.spawn) {
+				setSpawnInFlight(sessionId, true);
+				markInjection(sessionId);
+				resetStagnation(sessionId);
+				executeSpawnAction(
+					rule.spawn,
+					snapshotResult.snapshot,
+					context,
+					sessionId,
+					cfg.messageDelivery ?? {},
+					sessionCwd,
+				);
+				return;
+			}
 
 			const message = await safeWrapAsync(`rule "${rule.name}"`, () =>
 				executeRule(rule, snapshotResult.snapshot, context, false),
