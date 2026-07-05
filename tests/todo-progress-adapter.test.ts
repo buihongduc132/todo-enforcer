@@ -135,7 +135,7 @@ describe("buildSnapshotFromTodoProgress", () => {
 		expect(result.snapshot.completedCount).toBe(1);
 		expect(result.snapshot.totalCount).toBe(2);
 		expect(result.snapshot.incompleteList).toContain("Write tests");
-		expect(result.snapshot.incompleteList).toContain("pending");
+		expect(result.snapshot.incompleteList).toContain("- [pending]");
 	});
 
 	it("maps partial status to in_progress (spec scenario)", () => {
