@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 
 import { describe, expect, it } from "vitest";
 
@@ -295,5 +294,109 @@ describe("buildSessionContext", () => {
 		});
 
 		expect(context.latestUserMessage).toContain("You have incomplete tasks");
+	});
+});
+
+// ─── RED PHASE: todoSource dispatch (buildTodoSnapshot 4th param) ─────────────
+// These tests rely on the NEW optional 4th `todoSource` parameter to
+// buildTodoSnapshot, which is NOT YET implemented in src/todo-snapshot.ts.
+// They are EXPECTED TO FAIL until the GREEN phase wires the dispatch.
+import {
+	readTodoProgressState,
+} from "../src/todo-progress-adapter";
+
+const TP_KEY = "todo-progress-state";
+
+function todoProgressEntry(items: Array<{ text: string; status: string }>, extra: Record<string, unknown> = {}) {
+	return {
+		type: "custom",
+		customType: TP_KEY,
+		data: {
+			version: 1,
+			visible: true,
+			items,
+			offset: 0,
+			awaitingGoalCheck: false,
+			allowNextListReplacement: false,
+			...extra,
+		},
+	};
+}
+
+function branchTodoTool() {
+	return [
+		{ type: "message", message: { role: "user", content: "do work" } },
+		{
+			type: "message",
+			message: {
+				role: "toolResult",
+				toolName: "todo",
+				details: {
+					tasks: [
+						{ id: 1, subject: "Branch task", status: "in_progress" },
+					],
+					nextId: 2,
+				},
+			},
+		},
+	];
+}
+
+describe("buildTodoSnapshot — todoSource dispatch", () => {
+	it("todoSource='auto' WITH todo-progress entries → uses adapter", () => {
+		const branch = () => [
+			...branchTodoTool(),
+			todoProgressEntry([
+				{ text: "TP task", status: "todo" },
+				{ text: "TP done", status: "done" },
+			]),
+		];
+		const result = buildTodoSnapshot("s", branch, undefined, "auto");
+		expect(result.available).toBe(true);
+		// Adapter output uses bare "- [pending] TP task" (no #id) vs branch "- [in_progress] #1 Branch task"
+		expect(result.snapshot.incompleteList).toContain("TP task");
+		expect(result.snapshot.incompleteList).not.toContain("Branch task");
+	});
+
+	it("todoSource='auto' WITHOUT todo-progress entries → falls back to branch parser", () => {
+		const branch = () => branchTodoTool();
+		const result = buildTodoSnapshot("s", branch, undefined, "auto");
+		expect(result.available).toBe(true);
+		expect(result.snapshot.incompleteList).toContain("Branch task");
+	});
+
+	it("todoSource='branch' → always branch parser even if todo-progress entries exist", () => {
+		const branch = () => [
+			...branchTodoTool(),
+			todoProgressEntry([{ text: "TP task", status: "todo" }]),
+		];
+		const result = buildTodoSnapshot("s", branch, undefined, "branch");
+		expect(result.available).toBe(true);
+		expect(result.snapshot.incompleteList).toContain("Branch task");
+		expect(result.snapshot.incompleteList).not.toContain("TP task");
+	});
+
+	it("todoSource='todo-progress' with entries → uses adapter", () => {
+		const branch = () => [
+			...branchTodoTool(),
+			todoProgressEntry([{ text: "TP only", status: "todo" }]),
+		];
+		const result = buildTodoSnapshot("s", branch, undefined, "todo-progress");
+		expect(result.available).toBe(true);
+		expect(result.snapshot.incompleteList).toContain("TP only");
+		expect(result.snapshot.incompleteList).not.toContain("Branch task");
+	});
+
+	it("todoSource='todo-progress' without entries → available:false", () => {
+		const branch = () => branchTodoTool();
+		const result = buildTodoSnapshot("s", branch, undefined, "todo-progress");
+		expect(result.available).toBe(false);
+	});
+
+	it("default (no todoSource param) → 'auto' behavior (fallback to branch parser when no entries)", () => {
+		const branch = () => branchTodoTool();
+		const result = buildTodoSnapshot("s", branch);
+		expect(result.available).toBe(true);
+		expect(result.snapshot.incompleteList).toContain("Branch task");
 	});
 });

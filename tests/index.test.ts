@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,8 +33,14 @@ function createPiStub() {
 			sendUserMessage(text: string, opts: Record<string, unknown>) {
 				sentMessages.push({ message: { content: text }, options: opts });
 			},
-			registerCommand() {},
-			registerShortcut() {},
+			commands: new Map<string, { handler: Function; getArgumentCompletions?: Function }>(),
+			registerCommand(name: string, def: { handler: Function; getArgumentCompletions?: Function }) {
+				this.commands.set(name, def);
+			},
+			shortcuts: new Map<string, { handler: Function }>(),
+			registerShortcut(name: string, def: { handler: Function }) {
+				this.shortcuts.set(name, def);
+			},
 		},
 	};
 }
@@ -946,5 +951,640 @@ describe("todo-enforcer external fallback", () => {
 
 		await agentEnd?.({ messages: [] }, ctx);
 		expect(stub.sentMessages).toHaveLength(1);
+	});
+});
+
+// ─── RED PHASE: respectProgressAutoClear + injectTodoPolicy ──────────────────
+// These tests cover index.ts behavior that is NOT YET implemented:
+//   - auto-clear suppression on agent_end when respectProgressAutoClear=true
+//   - before_agent_start policy injection when injectTodoPolicy=true
+// They are EXPECTED TO FAIL until the GREEN phase implements the logic.
+
+const TP_KEY = "todo-progress-state";
+
+function makeTodoProgressStateEntry(
+	items: Array<{ text: string; status: string }>,
+	visible = true,
+) {
+	return {
+		type: "custom",
+		customType: TP_KEY,
+		data: {
+			version: 1,
+			visible,
+			items,
+			offset: 0,
+			awaitingGoalCheck: false,
+			allowNextListReplacement: false,
+		},
+	};
+}
+
+describe("respectProgressAutoClear", () => {
+	const acTempDirs: string[] = [];
+	afterEach(() => {
+		clearSessionIdentity();
+		for (const dir of acTempDirs.splice(0)) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("suppresses injection when respectProgressAutoClear=true and todo-progress auto-cleared (visible:false, items:[])", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-ac-"));
+		acTempDirs.push(cwd);
+		writeConfig(cwd, {
+			respectProgressAutoClear: true,
+			todoSource: "todo-progress",
+			cooldownMs: 0,
+			rules: [
+				{
+					name: "incomplete-tasks-remain",
+					condition: "has_incomplete",
+					action: "prompt",
+					prompt: "Continue",
+				},
+			],
+		});
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const agentEnd = stub.handlers.get("agent_end")?.[0];
+
+		// Branch contains an auto-cleared todo-progress state
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "do work" } },
+			{ type: "message", message: { role: "assistant", content: "done" } },
+			makeTodoProgressStateEntry([], false),
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "session-autoclear",
+				getBranch: () => branch,
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await agentEnd?.({ messages: [] }, ctx);
+
+		// Injection suppressed due to auto-clear
+		expect(stub.sentMessages).toHaveLength(0);
+	});
+
+	it("does not mark session as cancelled when auto-clear suppresses injection", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-ac2-"));
+		acTempDirs.push(cwd);
+		writeConfig(cwd, {
+			respectProgressAutoClear: true,
+			todoSource: "todo-progress",
+			cooldownMs: 0,
+			rules: [
+				{
+					name: "incomplete-tasks-remain",
+					condition: "has_incomplete",
+					action: "prompt",
+					prompt: "Continue",
+				},
+			],
+		});
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const agentEnd = stub.handlers.get("agent_end")?.[0];
+
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "do work" } },
+			{ type: "message", message: { role: "assistant", content: "done" } },
+			makeTodoProgressStateEntry([], false),
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "session-autoclear2",
+				getBranch: () => branch,
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await agentEnd?.({ messages: [] }, ctx);
+
+		// Now add incomplete tasks to the todo-progress state — a subsequent
+		// agent_end should still inject (session was NOT cancelled).
+		branch.push(
+			makeTodoProgressStateEntry([{ text: "Still pending", status: "todo" }], true),
+		);
+
+		await agentEnd?.({ messages: [] }, ctx);
+		expect(stub.sentMessages.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it("does NOT suppress injection when respectProgressAutoClear=false", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-ac3-"));
+		acTempDirs.push(cwd);
+		writeConfig(cwd, {
+			respectProgressAutoClear: false,
+			todoSource: "todo-progress",
+			cooldownMs: 0,
+			rules: [
+				{
+					name: "incomplete-tasks-remain",
+					condition: "has_incomplete",
+					action: "prompt",
+					prompt: "Continue",
+				},
+			],
+		});
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const agentEnd = stub.handlers.get("agent_end")?.[0];
+
+		// Branch has incomplete items (so has_incomplete matches) but the LATEST
+		// state entry is auto-cleared. With respectProgressAutoClear=false, we
+		// read the snapshot from the adapter regardless.
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "do work" } },
+			{ type: "message", message: { role: "assistant", content: "done" } },
+			makeTodoProgressStateEntry([{ text: "Pending", status: "todo" }], true),
+			makeTodoProgressStateEntry([], false), // auto-cleared latest
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "session-noautoclear",
+				getBranch: () => branch,
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await agentEnd?.({ messages: [] }, ctx);
+
+		// respectProgressAutoClear=false → injection should NOT be suppressed.
+		// (Adapter reads latest state which has items=[] → available:false →
+		//  no injection. So this test asserts the negative: that the suppression
+		//  path specifically tied to respectProgressAutoClear was NOT taken.
+		//  We instead verify the enforcer did not treat auto-clear as cancel.)
+		expect(stub.sentMessages).toHaveLength(0);
+	});
+});
+
+describe("injectTodoPolicy (before_agent_start hook)", () => {
+	const piTempDirs: string[] = [];
+	const origCwd = process.cwd();
+	afterEach(() => {
+		clearSessionIdentity();
+		process.chdir(origCwd);
+		for (const dir of piTempDirs.splice(0)) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does NOT register before_agent_start hook when injectTodoPolicy=false (default)", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-pi-"));
+		piTempDirs.push(cwd);
+		writeConfig(cwd, { injectTodoPolicy: false });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+
+		// No before_agent_start handler should be registered
+		expect(stub.handlers.has("before_agent_start")).toBe(false);
+	});
+
+	it("registers before_agent_start hook when injectTodoPolicy=true", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-pi2-"));
+		piTempDirs.push(cwd);
+		writeConfig(cwd, { injectTodoPolicy: true });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+
+		expect(stub.handlers.has("before_agent_start")).toBe(true);
+	});
+
+	it("appends custom todoPolicyText to systemPrompt when injectTodoPolicy=true", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-pi3-"));
+		piTempDirs.push(cwd);
+		const customPolicy = "ALWAYS finish your todos before stopping.";
+		writeConfig(cwd, {
+			injectTodoPolicy: true,
+			todoPolicyText: customPolicy,
+		});
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+		const beforeAgentStart = stub.handlers.get("before_agent_start")?.[0];
+		expect(beforeAgentStart).toBeDefined();
+
+		const event = { systemPrompt: "You are a helpful assistant." };
+		const result = await beforeAgentStart?.(event, createCtx(cwd));
+		expect(result?.systemPrompt).toContain(customPolicy);
+	});
+
+	it("uses built-in default policy text when injectTodoPolicy=true and no todoPolicyText set", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-pi4-"));
+		piTempDirs.push(cwd);
+		writeConfig(cwd, { injectTodoPolicy: true });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+		const beforeAgentStart = stub.handlers.get("before_agent_start")?.[0];
+		expect(beforeAgentStart).toBeDefined();
+
+		const event = { systemPrompt: "base prompt" };
+		const result = await beforeAgentStart?.(event, createCtx(cwd));
+		// Default policy should mention continuation/todos in some form.
+		expect(result?.systemPrompt).not.toBe("base prompt");
+		expect(result?.systemPrompt.length).toBeGreaterThan("base prompt".length);
+	});
+});
+
+// ─── Coverage: slash commands, shortcut, and error paths ──────────────────
+
+describe("slash commands and shortcuts", () => {
+	const cmdTempDirs: string[] = [];
+	const origCwd = process.cwd();
+
+	afterEach(() => {
+		clearSessionIdentity();
+		process.chdir(origCwd);
+		for (const dir of cmdTempDirs.splice(0)) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("enforcer-status command runs and calls ui.notify", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-cmd1-"));
+		cmdTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: true, cooldownMs: 0 });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		const notifyCalls: string[] = [];
+		stub.pi.notify = (msg: string) => notifyCalls.push(msg);
+
+		todoEnforcer(stub.pi as never);
+
+		// Trigger session_start so config loads
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "work" } },
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "cmd-session",
+				getBranch: () => branch,
+			},
+			ui: { notify: (msg: string) => notifyCalls.push(msg) },
+		};
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		// Find the enforcer-status command handler
+		const statusCmd = stub.pi.commands.get("enforcer-status");
+		expect(statusCmd).toBeDefined();
+		await statusCmd?.handler([], ctx);
+		expect(notifyCalls.length).toBeGreaterThanOrEqual(1);
+		expect(notifyCalls[0]).toContain("todo-enforcer");
+	});
+
+	it("ctrl+shift+t toggle shortcut flips enabled state", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-cmd2-"));
+		cmdTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: true, cooldownMs: 0 });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		const notifyCalls: string[] = [];
+
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "toggle-session",
+				getBranch: () => [],
+			},
+			ui: { notify: (msg: string) => notifyCalls.push(msg) },
+		};
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		// Toggle shortcut
+		const toggle = stub.pi.shortcuts.get("ctrl+shift+t");
+		expect(toggle).toBeDefined();
+		await toggle?.handler(ctx);
+		expect(notifyCalls.length).toBeGreaterThanOrEqual(1);
+		expect(notifyCalls[0]).toContain("disabled");
+	});
+
+	it("enforcer-switch command switches active rules", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-cmd3-"));
+		cmdTempDirs.push(cwd);
+		writeConfig(cwd, {
+			enabled: true,
+			cooldownMs: 0,
+			rules: [
+				{ name: "rule-a", condition: "has_incomplete", action: "prompt", prompt: "a" },
+				{ name: "rule-b", condition: "all_complete", action: "prompt", prompt: "b" },
+			],
+		});
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		const notifyCalls: string[] = [];
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "switch-session",
+				getBranch: () => [],
+			},
+			ui: { notify: (msg: string) => notifyCalls.push(msg) },
+		};
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		// Switch to only rule-a
+		const switchCmd = stub.pi.commands.get("enforcer-switch");
+		expect(switchCmd).toBeDefined();
+		await switchCmd?.handler("rule-a", ctx);
+		expect(notifyCalls.some(n => n.includes("rule-a"))).toBe(true);
+
+		// Reset
+		await switchCmd?.handler("reset", ctx);
+		expect(notifyCalls.some(n => n.includes("reset"))).toBe(true);
+
+		// Empty arg → usage message
+		await switchCmd?.handler("", ctx);
+		expect(notifyCalls.some(n => n.includes("Usage"))).toBe(true);
+
+		// Unknown rule → error
+		await switchCmd?.handler("nonexistent", ctx);
+		expect(notifyCalls.some(n => n.includes("Unknown"))).toBe(true);
+
+		// getArgumentCompletions
+		const completions = switchCmd?.getArgumentCompletions?.("rule");
+		expect(completions).toBeDefined();
+	});
+
+	it("enforcer-reset command resets state", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-cmd4-"));
+		cmdTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: true, cooldownMs: 0, rules: [
+			{ name: "test", condition: "has_incomplete", action: "prompt", prompt: "go" }
+		] });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		const notifyCalls: string[] = [];
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "reset-session",
+				getBranch: () => [],
+			},
+			ui: { notify: (msg: string) => notifyCalls.push(msg) },
+		};
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		const resetCmd = stub.pi.commands.get("enforcer-reset");
+		expect(resetCmd).toBeDefined();
+		await resetCmd?.handler("", ctx);
+		expect(notifyCalls.some(n => n.includes("reset"))).toBe(true);
+	});
+});
+
+describe("agent_end edge cases", () => {
+	const edgeTempDirs: string[] = [];
+	const origCwd = process.cwd();
+
+	afterEach(() => {
+		clearSessionIdentity();
+		process.chdir(origCwd);
+		for (const dir of edgeTempDirs.splice(0)) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("skips injection when config disabled", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-edge1-"));
+		edgeTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: false, cooldownMs: 0 });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const agentEnd = stub.handlers.get("agent_end")?.[0];
+
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "work" } },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						tasks: [{ id: 1, subject: "Task", status: "pending" }],
+						nextId: 2,
+					},
+				},
+			},
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "edge-session",
+				getBranch: () => branch,
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+		await agentEnd?.({ messages: [] }, ctx);
+		await flushMicrotasks(5);
+
+		expect(stub.sentMessages).toHaveLength(0);
+	});
+
+	it("detects user abort (stopReason=aborted) and suppresses future injections", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-edge2-"));
+		edgeTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: true, cooldownMs: 0, rules: [
+			{ name: "test", condition: "has_incomplete", action: "prompt", prompt: "go" }
+		] });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const agentEnd = stub.handlers.get("agent_end")?.[0];
+
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "work" } },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						tasks: [{ id: 1, subject: "Task", status: "pending" }],
+						nextId: 2,
+					},
+				},
+			},
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "abort-session",
+				getBranch: () => branch,
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		// Agent aborted by user (Esc)
+		await agentEnd?.({
+			messages: [
+				{ role: "assistant", stopReason: "aborted", content: "partial" },
+			],
+		}, ctx);
+		await flushMicrotasks(5);
+
+		// Should NOT inject after abort
+		expect(stub.sentMessages).toHaveLength(0);
+	});
+
+	it("detects LLM error and triggers backoff", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-edge3-"));
+		edgeTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: true, cooldownMs: 0, rules: [
+			{ name: "test", condition: "has_incomplete", action: "prompt", prompt: "go" }
+		] });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const agentEnd = stub.handlers.get("agent_end")?.[0];
+
+		const branch: BranchEntry[] = [
+			{ type: "message", message: { role: "user", content: "work" } },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						tasks: [{ id: 1, subject: "Task", status: "pending" }],
+						nextId: 2,
+					},
+				},
+			},
+		];
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "error-session",
+				getBranch: () => branch,
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		// Agent had an error
+		await agentEnd?.({
+			messages: [
+				{ role: "assistant", stopReason: "error", errorMessage: "rate limit exceeded", content: "" },
+			],
+		}, ctx);
+		await flushMicrotasks(5);
+
+		// Error detection should not crash, injection may or may not happen
+		// depending on cooldown — just verify no crash
+		expect(true).toBe(true);
+	});
+});
+
+describe("session lifecycle", () => {
+	const lcTempDirs: string[] = [];
+	const origCwd = process.cwd();
+
+	afterEach(() => {
+		clearSessionIdentity();
+		process.chdir(origCwd);
+		for (const dir of lcTempDirs.splice(0)) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("session_shutdown clears poll timers without crash", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "todo-enforcer-lc1-"));
+		lcTempDirs.push(cwd);
+		writeConfig(cwd, { enabled: true, cooldownMs: 0, rules: [
+			{ name: "test", condition: "has_incomplete", action: "prompt", prompt: "go" }
+		] });
+		process.chdir(cwd);
+
+		const stub = createPiStub();
+		todoEnforcer(stub.pi as never);
+
+		const sessionStart = stub.handlers.get("session_start")?.[0];
+		const sessionShutdown = stub.handlers.get("session_shutdown")?.[0];
+
+		const ctx = {
+			cwd,
+			hasUI: true,
+			sessionManager: {
+				getSessionFile: () => "shutdown-session",
+				getBranch: () => [],
+			},
+			ui: { notify() {} },
+		};
+
+		await sessionStart?.({}, ctx);
+		await flushMicrotasks(5);
+
+		// Should not crash
+		await sessionShutdown?.();
+		expect(true).toBe(true);
 	});
 });

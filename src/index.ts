@@ -43,7 +43,7 @@ import type {
 	TodoEnforcerConfig,
 	TodoSnapshot,
 } from "./config";
-import { DEFAULT_CONFIG, interpolateTemplate, loadConfigAsync } from "./config";
+import { DEFAULT_CONFIG, interpolateTemplate, loadConfig, loadConfigAsync } from "./config";
 import { dummyExternalCall, executeExternalCall } from "./external-caller";
 import {
 	checkSimilarError,
@@ -70,15 +70,33 @@ import {
 	setSpawnInFlight,
 	trackStagnation,
 } from "./session-state";
+import {
+	readTodoProgressState,
+	detectAutoClear,
+	TODO_PROGRESS_STATE_KEY,
+} from "./todo-progress-adapter";
 import { checkMessageStall, resetStallState } from "./message-stall";
 import { spawn as spawnProcess } from "node:child_process";
 import { type SessionEntry, buildSessionContext, buildTodoSnapshot } from "./todo-snapshot";
+import type { TodoSource } from "./config";
 
 /** Default timeout for spawned pi child processes (2 hours) */
 const DEFAULT_SPAWN_TIMEOUT_MS = 7_200_000;
 
 const HOOK_NAME = "todo-enforcer";
 const logger = createPluginLogger(HOOK_NAME);
+
+/** Built-in default policy text for injectTodoPolicy mode (standalone, no todo-progress). */
+const DEFAULT_TODO_POLICY_TEXT = [
+	"",
+	"",
+	"[TODO ENFORCER POLICY] For multi-step work:",
+	"- Create a todo list using the todo tool for any task with 3+ steps.",
+	"- Mark tasks in_progress when actively working on them.",
+	"- Mark tasks completed immediately when done — never batch completions.",
+	"- Do NOT stop until all tasks are completed or you hit a genuine blocker.",
+	"- If you go idle with incomplete tasks, the enforcer will remind you to continue.",
+].join("\n");
 
 function safeWrap<T>(label: string, fn: () => T): T | null {
 	try {
@@ -397,7 +415,12 @@ export default function (pi: ExtensionAPI) {
 		if (!context) return false;
 
 		const snapshotResult = safeWrap("buildSnapshot", () =>
-			buildTodoSnapshot(sessionId, () => getCachedBranch() as SessionEntry[], context),
+			buildTodoSnapshot(
+				sessionId,
+				() => getCachedBranch() as SessionEntry[],
+				context,
+				cfg.todoSource ?? "auto",
+			),
 		);
 		if (!snapshotResult || !snapshotResult.available) return false;
 
@@ -574,6 +597,25 @@ export default function (pi: ExtensionAPI) {
 	registerHook("todo-enforcer", "session_start", { blocking: false, source: "pi", origin: "global" });
 	registerHook("todo-enforcer", "session_shutdown", { blocking: false, source: "pi", origin: "global" });
 	registerHook("todo-enforcer", "agent_end", { blocking: false, source: "pi", origin: "global" });
+
+	// ── Policy injection (before_agent_start) ─────────────────────────────
+	// Only register when injectTodoPolicy is enabled in config.
+	// Uses a SYNC config read at init time — must use process.cwd().
+	try {
+		const initCfg = loadConfig(process.cwd());
+		if (initCfg.injectTodoPolicy) {
+			registerHook("todo-enforcer", "before_agent_start", { blocking: false, source: "pi", origin: "global" });
+			pi.on("before_agent_start", async (event, _ctx) => {
+				if (!isEnabled("todo-enforcer", "before_agent_start")) return;
+			const policyText = initCfg.todoPolicyText ?? DEFAULT_TODO_POLICY_TEXT;
+				return { systemPrompt: event.systemPrompt + policyText };
+			});
+		}
+	} catch (err) {
+		logger.debug("policy-injection init skipped", {
+			error: err instanceof Error ? err.message : String(err),
+		});
+	}
 
 	pi.on("session_start", (_event, ctx) => {
 		if (!isEnabled("todo-enforcer", "session_start")) return;
@@ -764,10 +806,25 @@ export default function (pi: ExtensionAPI) {
 					sessionId,
 					() => getCachedBranch() as SessionEntry[],
 					context,
+					cfg.todoSource ?? "auto",
 				),
 			);
 			if (!snapshotResult || !snapshotResult.available) {
 				return;
+			}
+
+			// ── Auto-clear suppression ───────────────────────────────────────
+			// When todo-progress auto-clears its widget (visible:false, items:[]),
+			// suppress injection for this cycle — but do NOT mark as cancelled.
+			// Poll timer will re-evaluate after cooldown.
+			if (cfg.respectProgressAutoClear !== false) {
+				const tpState = readTodoProgressState(
+					() => getCachedBranch() as SessionEntry[],
+				);
+				if (detectAutoClear(tpState)) {
+					logger.debug("auto-clear-suppressed", { sessionId });
+					return;
+				}
 			}
 
 			if (

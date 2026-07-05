@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 
 import { describe, expect, it } from "vitest";
 
@@ -246,5 +245,118 @@ describe("type-guards", () => {
 		it("returns false for array", () => {
 			expect(isPartialTodoConfig([1, 2, 3])).toBe(false);
 		});
+	});
+});
+
+// ─── RED PHASE: new todo-progress type guards ─────────────────────────────────
+import {
+	isTodoSource,
+	isTodoProgressItem,
+	isTodoProgressState,
+} from "../src/type-guards";
+
+describe("isTodoSource", () => {
+	it("returns true for 'auto'", () => {
+		expect(isTodoSource("auto")).toBe(true);
+	});
+	it("returns true for 'branch'", () => {
+		expect(isTodoSource("branch")).toBe(true);
+	});
+	it("returns true for 'todo-progress'", () => {
+		expect(isTodoSource("todo-progress")).toBe(true);
+	});
+	it("returns false for invalid string", () => {
+		expect(isTodoSource("tasks")).toBe(false);
+	});
+	it("returns false for non-string", () => {
+		expect(isTodoSource(42)).toBe(false);
+	});
+	it("returns false for null", () => {
+		expect(isTodoSource(null)).toBe(false);
+	});
+});
+
+describe("isTodoProgressItem", () => {
+	it("returns true for a valid todo item", () => {
+		expect(isTodoProgressItem({ text: "Do thing", status: "todo" })).toBe(true);
+	});
+	it("returns true for partial and done statuses", () => {
+		expect(isTodoProgressItem({ text: "a", status: "partial" })).toBe(true);
+		expect(isTodoProgressItem({ text: "b", status: "done" })).toBe(true);
+	});
+	it("returns false for invalid status", () => {
+		expect(isTodoProgressItem({ text: "a", status: "completed" })).toBe(false);
+		expect(isTodoProgressItem({ text: "a", status: "pending" })).toBe(false);
+	});
+	it("returns false when text is missing", () => {
+		expect(isTodoProgressItem({ status: "todo" })).toBe(false);
+	});
+	it("returns false when status is missing", () => {
+		expect(isTodoProgressItem({ text: "a" })).toBe(false);
+	});
+	it("returns false for null", () => {
+		expect(isTodoProgressItem(null)).toBe(false);
+	});
+	it("returns false for non-object", () => {
+		expect(isTodoProgressItem("text")).toBe(false);
+	});
+});
+
+describe("isTodoProgressState", () => {
+	const validState = {
+		version: 1,
+		visible: true,
+		items: [],
+		offset: 0,
+		awaitingGoalCheck: false,
+		allowNextListReplacement: false,
+	};
+
+	it("returns true for a valid version-1 state with items", () => {
+		expect(
+			isTodoProgressState({
+				...validState,
+				items: [{ text: "x", status: "todo" }],
+			}),
+		).toBe(true);
+	});
+	it("returns true for a valid version-1 state with empty items", () => {
+		expect(isTodoProgressState(validState)).toBe(true);
+	});
+	it("rejects version 2", () => {
+		expect(isTodoProgressState({ ...validState, version: 2 })).toBe(false);
+	});
+	it("rejects missing version", () => {
+		const { version, ...rest } = validState;
+		expect(isTodoProgressState(rest)).toBe(false);
+	});
+	it("rejects when visible is not boolean", () => {
+		expect(isTodoProgressState({ ...validState, visible: "true" })).toBe(false);
+	});
+	it("rejects when items is not an array", () => {
+		expect(isTodoProgressState({ ...validState, items: {} })).toBe(false);
+	});
+	it("rejects when an item has an invalid status", () => {
+		expect(
+			isTodoProgressState({
+				...validState,
+				items: [{ text: "x", status: "completed" }],
+			}),
+		).toBe(false);
+	});
+	it("rejects when an item is missing text", () => {
+		expect(
+			isTodoProgressState({
+				...validState,
+				items: [{ status: "todo" }],
+			}),
+		).toBe(false);
+	});
+	it("rejects null", () => {
+		expect(isTodoProgressState(null)).toBe(false);
+	});
+	it("rejects non-objects", () => {
+		expect(isTodoProgressState("state")).toBe(false);
+		expect(isTodoProgressState(42)).toBe(false);
 	});
 });

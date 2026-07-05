@@ -4,6 +4,10 @@
   "maxInjections": 5,
   "cooldownMs": 60000,
   "completionSummary": false,
+  "todoSource": "auto",
+  "respectProgressAutoClear": true,
+  "injectTodoPolicy": false,
+  "todoPolicyText": "\n\n[TODO ENFORCER POLICY] For multi-step work:\n- Create a todo list using the todo tool for any task with 3+ steps.\n- Mark tasks in_progress when actively working on them.\n- Mark tasks completed immediately when done.\n- Do NOT stop until all tasks are completed.",
   "detectStagnation": true,
   "stagnationThreshold": 3,
   "messageDelivery": {
