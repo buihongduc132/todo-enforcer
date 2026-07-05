@@ -11,3 +11,5 @@ coverage/
 sg-rules/
 sg-sha
 sgignore
+.fusion
+.pi
