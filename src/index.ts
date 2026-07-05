@@ -817,7 +817,7 @@ export default function (pi: ExtensionAPI) {
 			// When todo-progress auto-clears its widget (visible:false, items:[]),
 			// suppress injection for this cycle — but do NOT mark as cancelled.
 			// Poll timer will re-evaluate after cooldown.
-			if (cfg.respectProgressAutoClear !== false) {
+			if (cfg.respectProgressAutoClear !== false && cfg.todoSource !== "branch") {
 				const tpState = readTodoProgressState(
 					() => getCachedBranch() as SessionEntry[],
 				);

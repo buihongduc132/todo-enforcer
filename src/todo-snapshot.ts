@@ -257,7 +257,10 @@ export function buildTodoSnapshot(
 			const tpState = readTodoProgressState(getBranch);
 			const tpResult = buildSnapshotFromTodoProgress(tpState, context);
 			if (tpResult.available) return tpResult;
-			// Fall through to branch parser if adapter returned unavailable
+			// Adapter detected but unavailable (e.g. auto-cleared or empty items).
+			// Do NOT fall through to branch parser — branch would report stale
+			// todos that todo-progress has already cleared.
+			return tpResult;
 		}
 	}
 

@@ -24,7 +24,7 @@
 
 When `@firstpick/pi-extension-todo-progress` (bundled in `pi-package-webui`) is active alongside todo-enforcer, both extensions would otherwise conflict: double policy injection, double checklist parsing, and auto-clear masking stalls.
 
-todo-enforcer solves this with three config options (all default to safe values):
+todo-enforcer solves this with four config options (all default to safe values):
 
 | Config | Default | Effect |
 |--------|---------|--------|

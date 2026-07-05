@@ -139,6 +139,7 @@ export function isTodoProgressState(v: unknown): v is {
 	if (!Array.isArray(v.items)) return false;
 	if (!v.items.every((item) => isTodoProgressItem(item))) return false;
 	if (typeof v.offset !== "number") return false;
+	if (v.goal !== undefined && typeof v.goal !== "string") return false;
 	if (typeof v.awaitingGoalCheck !== "boolean") return false;
 	if (typeof v.allowNextListReplacement !== "boolean") return false;
 	return true;
