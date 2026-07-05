@@ -47,6 +47,7 @@ export function readTodoProgressState(
 	getBranch: () => SessionEntry[],
 ): TodoProgressState | null {
 	const branch = getBranch();
+	if (!Array.isArray(branch)) return null;
 
 	// Scan from end (latest first) for the most recent valid state entry
 	for (let i = branch.length - 1; i >= 0; i--) {
@@ -178,6 +179,7 @@ export function hasTodoProgressEntries(
 	getBranch: () => SessionEntry[],
 ): boolean {
 	const branch = getBranch();
+	if (!Array.isArray(branch)) return false;
 	for (const entry of branch) {
 		if (!entry || typeof entry !== "object") continue;
 		const entryRecord = entry as unknown as Record<string, unknown>;
