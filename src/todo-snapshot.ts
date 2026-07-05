@@ -6,13 +6,15 @@
  *
  * Falls back gracefully if no todo entries found in session.
  */
-// @ts-nocheck
-
-// 
-
 
 import { createPluginLogger } from "./lib/plugin-logger";
-import type { ContextFeedConfig, SessionContext, TodoSnapshot } from "./config";
+import type { ContextFeedConfig, SessionContext, TodoSnapshot, TodoSource } from "./config";
+import {
+	buildSnapshotFromTodoProgress,
+	detectAutoClear,
+	hasTodoProgressEntries,
+	readTodoProgressState,
+} from "./todo-progress-adapter";
 
 const logger = createPluginLogger("todo-enforcer");
 
@@ -240,7 +242,26 @@ export function buildTodoSnapshot(
 		allMessagesSinceLatestUser: "",
 		sessionMetadata: "",
 	},
+	todoSource: TodoSource = "auto",
 ): TodoSnapshotResult {
+	const source: TodoSource = todoSource ?? "auto";
+
+	// Dispatch based on todoSource config
+	if (source === "todo-progress") {
+		const tpState = readTodoProgressState(getBranch);
+		return buildSnapshotFromTodoProgress(tpState, context);
+	}
+
+	if (source === "auto") {
+		if (hasTodoProgressEntries(getBranch)) {
+			const tpState = readTodoProgressState(getBranch);
+			const tpResult = buildSnapshotFromTodoProgress(tpState, context);
+			if (tpResult.available) return tpResult;
+			// Fall through to branch parser if adapter returned unavailable
+		}
+	}
+
+	// source === "branch" or auto fallback
 	const details = scanSessionForTodos(getBranch);
 
 	if (!details) {

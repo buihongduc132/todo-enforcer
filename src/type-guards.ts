@@ -4,10 +4,6 @@
  * Replaces `as X` type assertions with safe runtime checks.
  * Each guard narrows `unknown` to a specific type.
  */
-// @ts-nocheck
-
-// 
-
 
 // ─── Primitive guards ────────────────────────────────────────────────────────
 
@@ -102,4 +98,48 @@ export function isPartialTodoConfig(
 	v: unknown,
 ): v is Partial<import("./config").TodoEnforcerConfig> {
 	return isRecord(v);
+}
+
+/**
+ * Check if a value is a valid TodoSource string.
+ */
+export function isTodoSource(v: unknown): v is import("./config").TodoSource {
+	return v === "auto" || v === "branch" || v === "todo-progress";
+}
+
+/**
+ * Check if a value is a valid todo-progress persisted item.
+ */
+export function isTodoProgressItem(
+	v: unknown,
+): v is { text: string; status: string } {
+	if (!isRecord(v)) return false;
+	return (
+		typeof v.text === "string" &&
+		typeof v.status === "string" &&
+		(v.status === "todo" || v.status === "partial" || v.status === "done")
+	);
+}
+
+/**
+ * Check if a value is a valid todo-progress persisted state (version 1).
+ */
+export function isTodoProgressState(v: unknown): v is {
+	version: 1;
+	visible: boolean;
+	items: Array<{ text: string; status: string }>;
+	offset: number;
+	goal?: string;
+	awaitingGoalCheck: boolean;
+	allowNextListReplacement: boolean;
+} {
+	if (!isRecord(v)) return false;
+	if (v.version !== 1) return false;
+	if (typeof v.visible !== "boolean") return false;
+	if (!Array.isArray(v.items)) return false;
+	if (!v.items.every((item) => isTodoProgressItem(item))) return false;
+	if (typeof v.offset !== "number") return false;
+	if (typeof v.awaitingGoalCheck !== "boolean") return false;
+	if (typeof v.allowNextListReplacement !== "boolean") return false;
+	return true;
 }

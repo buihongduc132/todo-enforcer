@@ -1,4 +1,3 @@
-// @ts-nocheck
 // 
 import { describe, expect, it } from "vitest";
 
@@ -141,5 +140,74 @@ describe("interpolateTemplate", () => {
 		expect(rendered).toContain("I am working on it");
 		expect(rendered).toContain("user: Please finish");
 		expect(rendered).toContain('{"cwd":"/repo"}');
+	});
+});
+
+// ─── RED PHASE: new config fields (todoSource, respectProgressAutoClear, injectTodoPolicy, todoPolicyText) ─
+
+describe("DEFAULT_CONFIG new todo-progress fields", () => {
+	it("has todoSource='auto' by default", () => {
+		expect(DEFAULT_CONFIG.todoSource).toBe("auto");
+	});
+
+	it("has respectProgressAutoClear=true by default", () => {
+		expect(DEFAULT_CONFIG.respectProgressAutoClear).toBe(true);
+	});
+
+	it("has injectTodoPolicy=false by default", () => {
+		expect(DEFAULT_CONFIG.injectTodoPolicy).toBe(false);
+	});
+
+	it("does not set a default todoPolicyText", () => {
+		expect(DEFAULT_CONFIG.todoPolicyText).toBeUndefined();
+	});
+});
+
+describe("mergeConfigLayers — new fields", () => {
+	it("preserves todoSource override from project config", () => {
+		const config = mergeConfigLayers(null, { todoSource: "todo-progress" });
+		expect(config.todoSource).toBe("todo-progress");
+	});
+
+	it("preserves respectProgressAutoClear override from global config", () => {
+		const config = mergeConfigLayers(
+			{ respectProgressAutoClear: false },
+			null,
+		);
+		expect(config.respectProgressAutoClear).toBe(false);
+	});
+
+	it("preserves injectTodoPolicy and todoPolicyText from project config", () => {
+		const config = mergeConfigLayers(null, {
+			injectTodoPolicy: true,
+			todoPolicyText: "Custom policy",
+		});
+		expect(config.injectTodoPolicy).toBe(true);
+		expect(config.todoPolicyText).toBe("Custom policy");
+	});
+
+	it("falls back to defaults when new fields are not provided", () => {
+		const config = mergeConfigLayers(null, null);
+		expect(config.todoSource).toBe("auto");
+		expect(config.respectProgressAutoClear).toBe(true);
+		expect(config.injectTodoPolicy).toBe(false);
+	});
+});
+
+describe("TodoSource type validation", () => {
+	it("accepts 'auto', 'branch', and 'todo-progress' as valid todoSource values", () => {
+		for (const src of ["auto", "branch", "todo-progress"]) {
+			const config = mergeConfigLayers(null, { todoSource: src });
+			expect(config.todoSource).toBe(src);
+		}
+	});
+
+	it("preserves an explicit todoSource='branch' override", () => {
+		const config = mergeConfigLayers(
+			{ todoSource: "branch" },
+			{ todoSource: "todo-progress" },
+		);
+		// project overrides global
+		expect(config.todoSource).toBe("todo-progress");
 	});
 });

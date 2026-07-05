@@ -18,6 +18,20 @@
 - **Message stall guard** — prevents infinite loops from repeated identical messages
 - **Polling timer** — re-evaluates after cooldown even without agent_end events
 - **Completion summary control** — configurable `completionSummary` to suppress or enable the "all done" message (default: suppressed)
+- **`todo-progress` compatibility** — auto-detects `@firstpick/pi-extension-todo-progress` widget state and reads from it as canonical source; suppresses double policy injection; respects auto-clear
+
+## `todo-progress` Compatibility
+
+When `@firstpick/pi-extension-todo-progress` (bundled in `pi-package-webui`) is active alongside todo-enforcer, both extensions would otherwise conflict: double policy injection, double checklist parsing, and auto-clear masking stalls.
+
+todo-enforcer solves this with three config options (all default to safe values):
+
+| Config | Default | Effect |
+|--------|---------|--------|
+| `todoSource` | `"auto"` | `"auto"`: detect todo-progress state in branch, use it if present, fall back to branch parser. `"branch"`: always use branch parser. `"todo-progress"`: only use todo-progress state. |
+| `respectProgressAutoClear` | `true` | When todo-progress clears its widget on a normal agent_end, suppress injection for that cycle (but don't cancel — poll timer re-evaluates after cooldown). |
+| `injectTodoPolicy` | `false` | When `false`, no system-prompt policy injection (todo-progress handles it). Set `true` only when running enforcer standalone without todo-progress. |
+| `todoPolicyText` | (built-in default) | Custom policy text when `injectTodoPolicy: true`. |
 
 ## Installation
 
@@ -107,6 +121,9 @@ Create `~/.todo-enforcer.json` (global) or `.todo-enforcer.json` (project-level)
   "maxInjections": 5,          // Max injections per session
   "cooldownMs": 5000,          // Cooldown between injections (ms)
   "completionSummary": false,  // Suppress "all done" message (default)
+  "todoSource": "auto",       // "auto" | "branch" | "todo-progress"
+  "respectProgressAutoClear": true,  // Respect todo-progress widget clear
+  "injectTodoPolicy": false,   // Inject policy text (false = let todo-progress handle)
   "detectStagnation": true,    // Stop injecting when stuck
   "stagnationThreshold": 3,    // Consecutive idle events before stagnation
   "backoff": {

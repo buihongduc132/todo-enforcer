@@ -8,10 +8,6 @@
  * The project file deep-merges onto the global file.
  * Missing files are silently skipped.
  */
-// @ts-nocheck
-
-// 
-
 
 import { readFileSync, writeFileSync, constants } from "node:fs";
 import { access, readFile, writeFile } from "node:fs/promises";
@@ -181,6 +177,14 @@ export interface BackoffConfig {
 	errorPatterns?: string[];
 }
 
+/**
+ * Where to read todo state from.
+ * - "auto" (default): detect todo-progress state in branch, fall back to branch parser
+ * - "branch": always use the branch parser (legacy behavior)
+ * - "todo-progress": only use todo-progress persisted state
+ */
+export type TodoSource = "auto" | "branch" | "todo-progress";
+
 export interface TodoEnforcerConfig {
 	/** Master enable/disable. Default: true. */
 	enabled?: boolean;
@@ -228,6 +232,34 @@ export interface TodoEnforcerConfig {
 	 * is sent after every task finishes. Set to true to re-enable the summary.
 	 */
 	completionSummary?: boolean;
+
+	/**
+	 * Where to read todo state from. Default: "auto".
+	 * - "auto": detect todo-progress state, fall back to branch parser
+	 * - "branch": always use branch parser
+	 * - "todo-progress": only use todo-progress persisted state
+	 */
+	todoSource?: TodoSource;
+
+	/**
+	 * When true (default), respect todo-progress's auto-clear on agent_end.
+	 * Suppresses injection for the current cycle when todo-progress clears its
+	 * widget, but polling timer still re-evaluates after cooldown.
+	 */
+	respectProgressAutoClear?: boolean;
+
+	/**
+	 * When true, inject todo policy text into system prompt via
+	 * before_agent_start hook. Default: false (todo-progress handles policy
+	 * when active). Set to true only when running enforcer standalone.
+	 */
+	injectTodoPolicy?: boolean;
+
+	/**
+	 * Custom policy text to inject when injectTodoPolicy is true.
+	 * If not set, a built-in default is used.
+	 */
+	todoPolicyText?: string;
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -258,6 +290,9 @@ export const DEFAULT_CONFIG: TodoEnforcerConfig = {
 		deliverAs: "followUp",
 	},
 	completionSummary: false,
+	todoSource: "auto",
+	respectProgressAutoClear: true,
+	injectTodoPolicy: false,
 	contextFeed: {
 		userMode: "latest",
 		assistantMode: "allSinceLatestUser",
