@@ -26,10 +26,6 @@
  *
  * @see flow/requirements/todo-enforcer.md
  */
-// @ts-nocheck
-
-// 
-
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { createPluginLogger } from "./lib/plugin-logger";
@@ -200,6 +196,9 @@ async function executeRule(
 		}
 
 		case "noop":
+			return null;
+
+		case "spawn":
 			return null;
 
 		default: {
